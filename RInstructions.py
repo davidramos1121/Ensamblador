@@ -1,7 +1,8 @@
 
+
 import re
 
-# Tabla de parámetros de instrucciones tipo R
+# --- Tablas de instrucciones ---
 R_TYPE = {
     'add':  ('0110011', '000', '0000000'),
     'sub':  ('0110011', '000', '0100000'),
@@ -15,54 +16,90 @@ R_TYPE = {
     'sltu': ('0110011', '011', '0000000')
 }
 
-# Convierte registros x0..x31 en binario de 5 bits
-def reg_to_bin(reg):
-    num = int(reg[1:])  # quitar la 'x'
-    return format(num, '05b')
+B_TYPE = {
+    'beq': ('1100011', '000'),
+    'bne': ('1100011', '001')
+}
 
-# Convierte un número binario a hexadecimal de 8 dígitos
-def bin_to_hex(bin_str):
-    return format(int(bin_str, 2), '08x')
+def reg(num): return format(int(num), '05b')
+def to_hex(b): return format(int(b, 2), '08x')
 
-# Compilar archivo de entrada a .bin y .hex
-def compile_rv32i_r(input_file, bin_out, hex_out):
-    pattern = re.compile(r'^\s*(\w+)\s+x(\d+),\s*x(\d+),\s*x(\d+)\s*$')
+# --- Pasada 1: construir tabla de etiquetas ---
+def primera_pasada(lines):
+    labels = {}
+    pc = 0
+    for line in lines:
+        clean = line.strip()
+        if not clean or clean.startswith('#'):  # comentario
+            continue
+        if clean.endswith(':'):
+            label = clean[:-1]
+            labels[label] = pc
+        else:
+            pc += 4
+    return labels
 
+# --- Pasada 2: generar binario ---
+def segunda_pasada(lines, labels):
     bin_lines = []
     hex_lines = []
+    pc = 0
 
-    with open(input_file, 'r') as f:
-        for line in f:
-            match = pattern.match(line)
-            if not match:
-                continue
+    # patrones regex
+    r_pat = re.compile(r'^\s*(\w+)\s+x(\d+),\s*x(\d+),\s*x(\d+)\s*$')
+    b_pat = re.compile(r'^\s*(\w+)\s+x(\d+),\s*x(\d+),\s*(\w+)\s*$')
 
-            inst, rd, rs1, rs2 = match.groups()
-            rd_bin = format(int(rd), '05b')
-            rs1_bin = format(int(rs1), '05b')
-            rs2_bin = format(int(rs2), '05b')
+    for line in lines:
+        text = line.strip()
+        if not text or text.startswith('#') or text.endswith(':'):
+            continue
 
-            if inst not in R_TYPE:
-                raise ValueError(f"Instrucción no soportada: {inst}")
-
+        # --- tipo R ---
+        m = r_pat.match(text)
+        if m:
+            inst, rd, rs1, rs2 = m.groups()
             opcode, funct3, funct7 = R_TYPE[inst]
-
-            bin_inst = f"{funct7}{rs2_bin}{rs1_bin}{funct3}{rd_bin}{opcode}"
-            hex_inst = bin_to_hex(bin_inst)
-
+            bin_inst = f"{funct7}{reg(rs2)}{reg(rs1)}{funct3}{reg(rd)}{opcode}"
             bin_lines.append(bin_inst)
-            hex_lines.append(hex_inst)
+            hex_lines.append(to_hex(bin_inst))
+            pc += 4
+            continue
 
-    with open(bin_out, 'w') as fb:
-        fb.write('\n'.join(bin_lines))
+        # --- tipo B ---
+        m = b_pat.match(text)
+        if m:
+            inst, rs1, rs2, label = m.groups()
+            opcode, funct3 = B_TYPE[inst]
+            imm = labels[label] - pc
+            imm = imm // 2  # en instrucciones RISC-V, offset está en múltiplos de 2
 
-    with open(hex_out, 'w') as fh:
-        fh.write('\n'.join(hex_lines))
+            # Formato B: imm[12] | imm[10:5] | rs2 | rs1 | funct3 | imm[4:1] | imm[11] | opcode
+            imm_bin = format(imm & 0x1FFF, '013b')
+            imm_12 = imm_bin[0]
+            imm_10_5 = imm_bin[1:7]
+            imm_4_1 = imm_bin[7:11]
+            imm_11 = imm_bin[11]
 
-# ---- Uso ----
-# Crea un archivo "programa.txt" con contenido como:
-# add x1, x2, x3
-# sub x4, x5, x6
-# and x7, x8, x9
-# Luego ejecuta:
-compile_rv32i_r('programa.txt', 'salida.bin', 'salida.hex')
+            bin_inst = f"{imm_12}{imm_10_5}{reg(rs2)}{reg(rs1)}{funct3}{imm_4_1}{imm_11}{opcode}"
+            bin_lines.append(bin_inst)
+            hex_lines.append(to_hex(bin_inst))
+            pc += 4
+            continue
+
+        raise ValueError(f"Línea no reconocida: {text}")
+
+    return bin_lines, hex_lines
+
+def ensamblar(archivo_in, bin_out, hex_out):
+    with open(archivo_in) as f:
+        lines = f.readlines()
+
+    labels = primera_pasada(lines)
+    bin_lines, hex_lines = segunda_pasada(lines, labels)
+
+    with open(bin_out, 'w') as fb: fb.write('\n'.join(bin_lines))
+    with open(hex_out, 'w') as fh: fh.write('\n'.join(hex_lines))
+
+# --- Uso ---
+ensamblar('Prueba_two_pass.asm', 'program.bin', 'program.hex')
+
