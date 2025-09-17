@@ -2,6 +2,6 @@
 start:  addi x5, x0, 10     
         ori  x6, x5, 0xFF    
 
-loop:   andi x7, x6, start   
+loop:   andi x7, x6, 99
         slli x8, x7, 2     
-        addi x9, x8, loop    
+        addi x9, x8, 9
