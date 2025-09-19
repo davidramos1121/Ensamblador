@@ -52,6 +52,35 @@ S_TYPE_INFO = {
 }
 
 # -------------------------
+# Diccionario de pseudoinstrucciones
+# -------------------------
+PSEUDO_INSTR = {
+    "nop":   lambda: ["addi x0, x0, 0"],
+    "mv":    lambda rd, rs: [f"addi x{rd}, x{rs}, 0"],
+    "not":   lambda rd, rs: [f"xori x{rd}, x{rs}, -1"],
+    "neg":   lambda rd, rs: [f"sub x{rd}, x0, x{rs}"],
+    "seqz":  lambda rd, rs: [f"sltiu x{rd}, x{rs}, 1"],
+    "snez":  lambda rd, rs: [f"sltu x{rd}, x0, x{rs}"],
+    "sltz":  lambda rd, rs: [f"slt x{rd}, x{rs}, x0"],
+    "sgtz":  lambda rd, rs: [f"slt x{rd}, x0, x{rs}"],
+    "beqz":  lambda rs, imm: [f"beq x{rs}, x0, {imm}"],
+    "bnez":  lambda rs, imm: [f"bne x{rs}, x0, {imm}"],
+    "blez":  lambda rs, imm: [f"bge x0, x{rs}, {imm}"],
+    "bgez":  lambda rs, imm: [f"bge x{rs}, x0, {imm}"],
+    "bltz":  lambda rs, imm: [f"blt x{rs}, x0, {imm}"],
+    "bgtz":  lambda rs, imm: [f"blt x0, x{rs}, {imm}"],
+    "bgt":   lambda rs, rt, imm: [f"blt x{rt}, x{rs}, {imm}"],
+    "ble":   lambda rs, rt, imm: [f"bge x{rt}, x{rs}, {imm}"],
+    "bgtu":  lambda rs, rt, imm: [f"bltu x{rt}, x{rs}, {imm}"],
+    "bleu":  lambda rs, rt, imm: [f"bgeu x{rt}, x{rs}, {imm}"],
+    "j":     lambda imm: [f"jal x0, {imm}"],
+    "jal":   lambda imm: [f"jal x1, {imm}"],
+    "jr":    lambda rs: [f"jalr x0, x{rs}, 0"],
+    "jalr":  lambda rs: [f"jalr x1, x{rs}, 0"],
+    "ret":   lambda: ["jalr x0, x1, 0"],
+}
+
+# -------------------------
 # Utilidades
 # -------------------------
 def to_binary(val: int, bits: int) -> str:
@@ -165,6 +194,28 @@ def first_pass(lines):
             linea = parts[1].strip()
             if not linea:
                 continue
+
+        # Verificar pseudoinstrucciones
+        tokens = linea.split()
+        mnemonic = tokens[0]
+        if mnemonic in PSEUDO_INSTR:
+            args = [t.replace("x", "") for t in tokens[1:]]
+            expanded = PSEUDO_INSTR[mnemonic](*args)
+            for exp in expanded:
+                m_i = I_TYPE_RE.match(exp)
+                m_s = S_TYPE_RE.match(exp)
+                if m_i:
+                    if m_i.group(1):
+                        mnemonic, rd, imm, rs1 = m_i.group(1, 2, 3, 4)
+                        instructions.append((num_linea, exp, mnemonic, (rd, imm, rs1), "I"))
+                    else:
+                        mnemonic, rd, rs1, imm = m_i.group(5, 6, 7, 8)
+                        instructions.append((num_linea, exp, mnemonic, (rd, rs1, imm), "I"))
+                elif m_s:
+                    mnemonic, rs2, imm, rs1 = m_s.groups()
+                    instructions.append((num_linea, exp, mnemonic, (rs2, imm, rs1), "S"))
+                location_counter += 4
+            continue
 
         # Instrucción tipo I
         m = I_TYPE_RE.match(linea)
