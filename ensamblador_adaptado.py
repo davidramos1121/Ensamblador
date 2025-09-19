@@ -19,8 +19,13 @@ R_TYPE_INFO = {
 
 B_TYPE_INFO = {
     'beq': ('1100011', '000'),
-    'bne': ('1100011', '001')
+    'bne': ('1100011', '001'),
+    'blt': ('1100011', '004'),
+    'bge': ('1100011', '005'),
+    'bltu': ('1100011', '006'),
+    'bgeu': ('1100011', '007')
 }
+
 
 I_TYPE_INFO = {
     "addi":  {"opcode": "0010011", "funct3": "000"},
@@ -189,7 +194,7 @@ def second_pass(instructions, symbol_table, bin_file, hex_file):
 # ==============================
 
 def main():
-    asm_file = "program.asm"
+    asm_file = "Prueba_two_pass.asm"
     bin_file = "program.bin"
     hex_file = "program.hex"
 
