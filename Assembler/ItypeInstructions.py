@@ -17,6 +17,16 @@ S_TYPE_RE = re.compile(
     r'x(\d+)\s*,\s*([-]?\d+|0x[0-9A-Fa-f]+|\w+)\(x(\d+)\)\s*$'
 )
 
+
+R_TYPE_RE = re.compile(
+    r'^\s*(add|sub|xor|or|and|sll|srl|sra|slt|sltu)\s+'
+    r'x(\d+)\s*,\s*x(\d+)\s*,\s*x(\d+)\s*$'
+)
+
+B_TYPE_RE = re.compile(
+    r'^\s*(beq|bne|blt|bge|bltu|bgeu)\s+'
+    r'x(\d+)\s*,\s*x(\d+)\s*,\s*(\w+)\s*$'
+)
 # -------------------------
 # Diccionario de instrucciones tipo I
 # -------------------------
@@ -49,6 +59,32 @@ S_TYPE_INFO = {
     "sb": {"opcode": "0100011", "funct3": "000"},
     "sh": {"opcode": "0100011", "funct3": "001"},
     "sw": {"opcode": "0100011", "funct3": "010"},
+}
+
+
+R_TYPE_INFO = {
+    "add":  {"opcode": "0110011", "funct3": "000", "funct7": "0000000"},
+    "sub":  {"opcode": "0110011", "funct3": "000", "funct7": "0100000"},
+    "xor":  {"opcode": "0110011", "funct3": "100", "funct7": "0000000"},
+    "or":   {"opcode": "0110011", "funct3": "110", "funct7": "0000000"},
+    "and":  {"opcode": "0110011", "funct3": "111", "funct7": "0000000"},
+    "sll":  {"opcode": "0110011", "funct3": "001", "funct7": "0000000"},
+    "srl":  {"opcode": "0110011", "funct3": "101", "funct7": "0000000"},
+    "sra":  {"opcode": "0110011", "funct3": "101", "funct7": "0100000"},
+    "slt":  {"opcode": "0110011", "funct3": "010", "funct7": "0000000"},
+    "sltu": {"opcode": "0110011", "funct3": "011", "funct7": "0000000"},
+}
+
+# -------------------------
+# Diccionario de instrucciones tipo B
+# -------------------------
+B_TYPE_INFO = {
+    "beq":  {"opcode": "1100011", "funct3": "000"},
+    "bne":  {"opcode": "1100011", "funct3": "001"},
+    "blt":  {"opcode": "1100011", "funct3": "100"},
+    "bge":  {"opcode": "1100011", "funct3": "101"},
+    "bltu": {"opcode": "1100011", "funct3": "110"},
+    "bgeu": {"opcode": "1100011", "funct3": "111"},
 }
 
 # -------------------------
@@ -171,6 +207,37 @@ def assemble_s_type(mnemonic, args, symbol_table):
     machine_hex = f"0x{int(machine_bin, 2):08X}"
     return machine_bin, machine_hex
 
+def assemble_r_type(mnemonic, args, symbol_table):
+    info = R_TYPE_INFO[mnemonic]
+    rd, rs1, rs2 = args
+    rd_bin = to_binary(int(rd), 5)
+    rs1_bin = to_binary(int(rs1), 5)
+    rs2_bin = to_binary(int(rs2), 5)
+    funct3 = info["funct3"]
+    funct7 = info["funct7"]
+    opcode = info["opcode"]
+    machine_bin = f"{funct7}{rs2_bin}{rs1_bin}{funct3}{rd_bin}{opcode}"
+    machine_hex = f"0x{int(machine_bin, 2):08X}"
+    return machine_bin, machine_hex
+
+def assemble_b_type(mnemonic, args, symbol_table):
+    info = B_TYPE_INFO[mnemonic]
+    rs1, rs2, label = args
+    rs1_bin = to_binary(int(rs1), 5)
+    rs2_bin = to_binary(int(rs2), 5)
+    imm_val = parse_immediate(label, symbol_table)
+    imm_offset = imm_val  # aquí tendrías que calcular offset relativo (PC-relative)
+    imm_bin = to_binary(imm_offset, 13)  # 12 bits + signo
+    imm_12 = imm_bin[0]
+    imm_10_5 = imm_bin[1:7]
+    imm_4_1 = imm_bin[7:11]
+    imm_11 = imm_bin[11]
+    funct3 = info["funct3"]
+    opcode = info["opcode"]
+    machine_bin = f"{imm_12}{imm_10_5}{rs2_bin}{rs1_bin}{funct3}{imm_4_1}{imm_11}{opcode}"
+    machine_hex = f"0x{int(machine_bin, 2):08X}"
+    return machine_bin, machine_hex
+
 # -------------------------
 # Primera pasada
 # -------------------------
@@ -178,68 +245,125 @@ def first_pass(lines):
     symbol_table = {}
     instructions = []
     location_counter = 0
+    data_counter = 0
+    in_text = False
+    in_data = False
 
     for num_linea, linea in enumerate(lines, start=1):
-        linea = linea.strip()
-        if not linea or linea.startswith("#"):
+        code = linea.split('#')[0].strip()
+        if not code:
             continue
 
+        # -------------------------
+        # Directivas
+        # -------------------------
+        if code == ".data":
+            print(f"[Línea {num_linea}] 📌 Directiva reconocida: .data")
+            in_data = True
+            in_text = False
+            continue
+
+        elif code.startswith(".word"):
+            if not in_data:
+                print(f"[Línea {num_linea}] ❌ Error: '.word' solo puede usarse dentro de la sección .data")
+            else:
+                parts = code.split()
+                if len(parts) != 2 or not parts[1].isdigit():
+                    print(f"[Línea {num_linea}] ❌ Error de sintaxis en '.word'. Formato esperado: .word <entero>")
+                else:
+                    print(f"[Línea {num_linea}] 📌 Directiva reconocida: {code}")
+                    data_counter += 4
+            continue
+
+        elif code == ".text":
+            print(f"[Línea {num_linea}] 📌 Directiva reconocida: .text")
+            in_text = True
+            in_data = False
+            location_counter = 0
+            continue
+
+        # -------------------------
         # Labels
-        if ":" in linea:
-            parts = linea.split(":", 1)
+        # -------------------------
+        if ":" in code:
+            parts = code.split(":", 1)
             label = parts[0].strip()
             if label in symbol_table:
-                raise ValueError(f"[Línea {num_linea}] Label duplicado: {label}")
-            symbol_table[label] = location_counter
-            linea = parts[1].strip()
-            if not linea:
+                print(f"[Línea {num_linea}] ❌ Error: Label duplicado '{label}'")
+            else:
+                addr = location_counter if in_text else data_counter
+                symbol_table[label] = addr
+                print(f"[Línea {num_linea}] 📌 Etiqueta reconocida: {label} -> {addr}")
+            code = parts[1].strip()
+            if not code:
                 continue
 
-        # Verificar pseudoinstrucciones
-        tokens = linea.split()
+        # -------------------------
+        # Instrucciones
+        # -------------------------
+        tokens = code.replace(",", " ").split()
         mnemonic = tokens[0]
-        if mnemonic in PSEUDO_INSTR:
-            args = [t.replace("x", "") for t in tokens[1:]]
-            expanded = PSEUDO_INSTR[mnemonic](*args)
-            for exp in expanded:
-                m_i = I_TYPE_RE.match(exp)
-                m_s = S_TYPE_RE.match(exp)
-                if m_i:
-                    if m_i.group(1):
-                        mnemonic, rd, imm, rs1 = m_i.group(1, 2, 3, 4)
-                        instructions.append((num_linea, exp, mnemonic, (rd, imm, rs1), "I"))
-                    else:
-                        mnemonic, rd, rs1, imm = m_i.group(5, 6, 7, 8)
-                        instructions.append((num_linea, exp, mnemonic, (rd, rs1, imm), "I"))
-                elif m_s:
-                    mnemonic, rs2, imm, rs1 = m_s.groups()
-                    instructions.append((num_linea, exp, mnemonic, (rs2, imm, rs1), "S"))
-                location_counter += 4
-            continue
 
-        # Instrucción tipo I
-        m = I_TYPE_RE.match(linea)
-        if m:
-            if m.group(1):  # loads
-                mnemonic, rd, imm, rs1 = m.group(1, 2, 3, 4)
-                instructions.append((num_linea, linea, mnemonic, (rd, imm, rs1), "I"))
-            else:  # alu
-                mnemonic, rd, rs1, imm = m.group(5, 6, 7, 8)
-                instructions.append((num_linea, linea, mnemonic, (rd, rs1, imm), "I"))
+        # Pseudoinstrucciones
+        if mnemonic in PSEUDO_INSTR:
+            instructions.append((num_linea, code, mnemonic, tokens[1:], "PSEUDO"))
             location_counter += 4
             continue
 
-        # Instrucción tipo S
-        m = S_TYPE_RE.match(linea)
+        # I-Type
+        m = I_TYPE_RE.match(code)
+        if m:
+            if m.group(1):  # load
+                mnemonic, rd, imm, rs1 = m.group(1, 2, 3, 4)
+                instructions.append((num_linea, code, mnemonic, (rd, imm, rs1), "I"))
+            else:
+                mnemonic, rd, rs1, imm = m.group(5, 6, 7, 8)
+                instructions.append((num_linea, code, mnemonic, (rd, rs1, imm), "I"))
+            location_counter += 4
+            continue
+
+        # S-Type
+        m = S_TYPE_RE.match(code)
         if m:
             mnemonic, rs2, imm, rs1 = m.groups()
-            instructions.append((num_linea, linea, mnemonic, (rs2, imm, rs1), "S"))
+            instructions.append((num_linea, code, mnemonic, (rs2, imm, rs1), "S"))
             location_counter += 4
             continue
 
-        print(f"[Línea {num_linea}] ❌ Instrucción inválida: {linea}")
+        # R-Type
+        m = R_TYPE_RE.match(code)
+        if m:
+            mnemonic, rd, rs1, rs2 = m.groups()
+            instructions.append((num_linea, code, mnemonic, (rd, rs1, rs2), "R"))
+            location_counter += 4
+            continue
+
+        # B-Type
+        m = B_TYPE_RE.match(code)
+        if m:
+            mnemonic, rs1, rs2, label = m.groups()
+            instructions.append((num_linea, code, mnemonic, (rs1, rs2, label), "B"))
+            location_counter += 4
+            continue
+
+        # -------------------------
+        # Si llegamos aquí → Error
+        # -------------------------
+        if mnemonic.startswith("."):
+            print(f"[Línea {num_linea}] ❌ Error de directiva: '{mnemonic}' no es válida o está fuera de contexto")
+        elif mnemonic not in (list(I_TYPE_INFO.keys()) +
+                              list(S_TYPE_INFO.keys()) +
+                              list(R_TYPE_INFO.keys()) +
+                              list(B_TYPE_INFO.keys()) +
+                              list(PSEUDO_INSTR.keys())):
+            print(f"[Línea {num_linea}] ❌ Instrucción inválida: '{mnemonic}' (no pertenece a RV32I ni es pseudoinstrucción soportada).")
+        elif len(tokens) == 1:
+            print(f"[Línea {num_linea}] ❌ Error de operandos: la instrucción '{mnemonic}' requiere más argumentos.")
+        else:
+            print(f"[Línea {num_linea}] ❌ Error de sintaxis en '{code}'. Revisa comas, registros o inmediatos.")
 
     return symbol_table, instructions
+
 
 # -------------------------
 # Segunda pasada
@@ -248,16 +372,26 @@ def second_pass(instructions, symbol_table, bin_file, hex_file):
     bin_lines = []
     hex_lines = []
 
-    for num_linea, linea, mnemonic, args, tipo in instructions:
+    for num_linea, code, mnemonic, args, tipo in instructions:
         try:
             if tipo == "I":
                 binario, hexa = assemble_i_type(mnemonic, args, symbol_table)
             elif tipo == "S":
                 binario, hexa = assemble_s_type(mnemonic, args, symbol_table)
+            elif tipo == "R":
+                binario, hexa = assemble_r_type(mnemonic, args, symbol_table)
+            elif tipo == "B":
+                # Verificar si el label existe
+                if args[2] not in symbol_table:
+                    raise ValueError(f"Etiqueta no definida: '{args[2]}'")
+                binario, hexa = assemble_b_type(mnemonic, args, symbol_table)
+            elif tipo == "PSEUDO":
+                # Aquí deberías expandir la pseudoinstrucción antes de ensamblar
+                raise ValueError(f"Pseudoinstrucción '{mnemonic}' aún no implementada en second_pass")
             else:
                 raise ValueError("Tipo de instrucción desconocido")
 
-            print(f"[Línea {num_linea}] {linea}")
+            print(f"[Línea {num_linea}] {code}")
             print(f"   Bin: {binario}")
             print(f"   Hex: {hexa}")
             bin_lines.append(binario)
@@ -272,7 +406,6 @@ def second_pass(instructions, symbol_table, bin_file, hex_file):
         fh.write("\n".join(hex_lines))
 
     print(f"\n✅ Ensamblado completado → {bin_file}, {hex_file}")
-
 # -------------------------
 # Main
 # -------------------------
@@ -292,6 +425,14 @@ def main():
 
     except FileNotFoundError:
         print(f"⚠️ No se encontró el archivo {asm_file}.")
+
+# -------------------------
+# Primera pasada
+# -------------------------
+# -------------------------
+# Primera pasada (con errores más específicos)
+# -------------------------
+
 
 if __name__ == "__main__":
     main()
