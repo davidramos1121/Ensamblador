@@ -1,4 +1,5 @@
 import re
+import sys
 
 # -------------------------
 # -------------------------
@@ -327,6 +328,7 @@ def first_pass(lines):
     data_counter = 0
     in_text = False
     in_data = False
+    errors = False 
 
     for num_linea, linea in enumerate(lines, start=1):
         code = linea.split('#')[0].strip()
@@ -452,6 +454,7 @@ def first_pass(lines):
         # -------------------------
         if mnemonic.startswith("."):
             print(f"[Línea {num_linea}] ❌ Error de directiva: '{mnemonic}' no es válida o está fuera de contexto")
+            errors = True
         elif mnemonic not in (list(I_TYPE_INFO.keys()) +
                               list(S_TYPE_INFO.keys()) +
                               list(R_TYPE_INFO.keys()) +
@@ -460,11 +463,18 @@ def first_pass(lines):
                               list(U_TYPE_INFO.keys()) +
                               list(PSEUDO_INSTR.keys()) +
                               ["ecall", "ebreak"]):
-            print(f"[Línea {num_linea}] ❌ Instrucción inválida: '{mnemonic}' (no pertenece a RV32I ni es pseudoinstrucción soportada).")
+            print(f"[Línea {num_linea}] ❌ Instrucción inválida: '{mnemonic}'")
+            errors = True
         elif len(tokens) == 1:
-            print(f"[Línea {num_linea}] ❌ Error de operandos: la instrucción '{mnemonic}' requiere más argumentos.")
+            print(f"[Línea {num_linea}] ❌ Error de operandos en '{mnemonic}'")
+            errors = True
         else:
-            print(f"[Línea {num_linea}] ❌ Error de sintaxis en '{code}'. Revisa comas, registros o inmediatos.")
+            print(f"[Línea {num_linea}] ❌ Error de sintaxis en '{code}'")
+            errors = True
+
+    if errors:
+        print("\n⛔ Ensamblado detenido: se encontraron errores en la primera pasada.")
+        sys.exit(1)  # <-- detenemos ejecución aquí
 
     return symbol_table, instructions
 # -------------------------
@@ -478,39 +488,24 @@ def second_pass(instructions, symbol_table, bin_file, hex_file):
         try:
             if tipo == "I":
                 binario, hexa = assemble_i_type(mnemonic, args, symbol_table)
-
             elif tipo == "S":
                 binario, hexa = assemble_s_type(mnemonic, args, symbol_table)
-
             elif tipo == "R":
                 binario, hexa = assemble_r_type(mnemonic, args, symbol_table)
-
             elif tipo == "B":
-                # Verificar si el label existe
                 if args[2] not in symbol_table:
                     raise ValueError(f"Etiqueta no definida: '{args[2]}'")
                 binario, hexa = assemble_b_type(mnemonic, args, symbol_table)
-
             elif tipo == "J":
-                # jal rd, label
                 if args[1] not in symbol_table:
                     raise ValueError(f"Etiqueta no definida: '{args[1]}'")
                 binario, hexa = assemble_j_type(mnemonic, args, symbol_table)
-
             elif tipo == "U":
-                # lui rd, imm   |   auipc rd, imm
                 binario, hexa = assemble_u_type(mnemonic, args, symbol_table)
-
             elif tipo == "SYS":
-                # ecall / ebreak
-                binario, hexa = assemble_sys_type(mnemonic, args, symbol_table)
-
-            elif tipo == "PSEUDO":
-                # Aquí deberías expandir la pseudoinstrucción antes de ensamblar
-                raise ValueError(f"Pseudoinstrucción '{mnemonic}' aún no implementada en second_pass")
-
+                binario, hexa = assemble_sys_type(mnemonic)
             else:
-                raise ValueError("Tipo de instrucción desconocido")
+                raise ValueError(f"Tipo de instrucción desconocido: {tipo}")
 
             print(f"[Línea {num_linea}] {code}")
             print(f"   Bin: {binario}")
@@ -519,7 +514,9 @@ def second_pass(instructions, symbol_table, bin_file, hex_file):
             hex_lines.append(hexa)
 
         except Exception as e:
-            print(f"[Línea {num_linea}] ⚠️ Error: {e}")
+            print(f"[Línea {num_linea}] ❌ Error: {e}")
+            print("\n⛔ Ensamblado detenido en segunda pasada.")
+            sys.exit(1)  # <-- detenemos ejecución aquí también
 
     with open(bin_file, "w") as fb:
         fb.write("\n".join(bin_lines))
@@ -528,6 +525,8 @@ def second_pass(instructions, symbol_table, bin_file, hex_file):
         fh.write("\n".join(hex_lines))
 
     print(f"\n✅ Ensamblado completado → {bin_file}, {hex_file}")
+
+
 # -------------------------
 # Main
 # -------------------------
@@ -547,6 +546,7 @@ def main():
 
     except FileNotFoundError:
         print(f"⚠️ No se encontró el archivo {asm_file}.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
