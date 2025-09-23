@@ -1,14 +1,16 @@
 import re
 
 # -------------------------
-# Expresiones regulares para instrucciones tipo I y tipo S
 # -------------------------
+# Expresiones regulares
+# -------------------------
+
 I_TYPE_RE = re.compile(
     # LOADS → formato: lb rd, imm(rs1)
     r'^\s*(lb|lh|lw|lbu|lhu)\s+'
     r'x(\d+)\s*,\s*([-]?\d+|0x[0-9A-Fa-f]+|\w+)\s*\(\s*x(\d+)\s*\)\s*$'
     # ALU inmediatos → formato: addi rd, rs1, imm
-    r'|^\s*(addi|xori|ori|andi|slli|srli|srai|slti|sltiu)\s+'
+    r'|^\s*(addi|xori|ori|andi|slli|srli|srai|slti|sltiu|jalr)\s+'
     r'x(\d+)\s*,\s*x(\d+)\s*,\s*([-]?\d+|0x[0-9A-Fa-f]+|\w+)\s*$'
 )
 
@@ -16,7 +18,6 @@ S_TYPE_RE = re.compile(
     r'^\s*(sb|sh|sw)\s+'
     r'x(\d+)\s*,\s*([-]?\d+|0x[0-9A-Fa-f]+|\w+)\(x(\d+)\)\s*$'
 )
-
 
 R_TYPE_RE = re.compile(
     r'^\s*(add|sub|xor|or|and|sll|srl|sra|slt|sltu)\s+'
@@ -27,6 +28,20 @@ B_TYPE_RE = re.compile(
     r'^\s*(beq|bne|blt|bge|bltu|bgeu)\s+'
     r'x(\d+)\s*,\s*x(\d+)\s*,\s*(\w+)\s*$'
 )
+
+J_TYPE_RE = re.compile(
+    r'^\s*(jal)\s+x(\d+)\s*,\s*(\w+|[-]?\d+|0x[0-9A-Fa-f]+)\s*$'
+)
+
+U_TYPE_RE = re.compile(
+    r'^\s*(lui|auipc)\s+x(\d+)\s*,\s*([-]?\d+|0x[0-9A-Fa-f]+)\s*$'
+)
+
+SYS_TYPE_RE = re.compile(
+    r'^\s*(ecall|ebreak)\s*$'
+)
+
+
 # -------------------------
 # Diccionario de instrucciones tipo I
 # -------------------------
@@ -50,6 +65,9 @@ I_TYPE_INFO = {
     "lw":    {"opcode": "0000011", "funct3": "010"},
     "lbu":   {"opcode": "0000011", "funct3": "100"},
     "lhu":   {"opcode": "0000011", "funct3": "101"},
+
+    # Jumps indirectos
+    "jalr":  {"opcode": "1100111", "funct3": "000"},
 }
 
 # -------------------------
@@ -61,7 +79,9 @@ S_TYPE_INFO = {
     "sw": {"opcode": "0100011", "funct3": "010"},
 }
 
-
+# -------------------------
+# Diccionario de instrucciones tipo R
+# -------------------------
 R_TYPE_INFO = {
     "add":  {"opcode": "0110011", "funct3": "000", "funct7": "0000000"},
     "sub":  {"opcode": "0110011", "funct3": "000", "funct7": "0100000"},
@@ -88,6 +108,30 @@ B_TYPE_INFO = {
 }
 
 # -------------------------
+# Diccionario de instrucciones tipo J
+# -------------------------
+J_TYPE_INFO = {
+    "jal": {"opcode": "1101111"},
+}
+
+# -------------------------
+# Diccionario de instrucciones tipo U
+# -------------------------
+U_TYPE_INFO = {
+    "lui":   {"opcode": "0110111"},
+    "auipc": {"opcode": "0010111"},
+}
+
+# -------------------------
+# Diccionario de instrucciones tipo SYS
+# -------------------------
+SYS_TYPE_INFO = {
+    "ecall":  {"opcode": "1110011", "funct3": "000", "imm": "000000000000"},
+    "ebreak": {"opcode": "1110011", "funct3": "000", "imm": "000000000001"},
+}
+
+
+# -------------------------
 # Diccionario de pseudoinstrucciones
 # -------------------------
 PSEUDO_INSTR = {
@@ -110,9 +154,7 @@ PSEUDO_INSTR = {
     "bgtu":  lambda rs, rt, imm: [f"bltu x{rt}, x{rs}, {imm}"],
     "bleu":  lambda rs, rt, imm: [f"bgeu x{rt}, x{rs}, {imm}"],
     "j":     lambda imm: [f"jal x0, {imm}"],
-    "jal":   lambda imm: [f"jal x1, {imm}"],
     "jr":    lambda rs: [f"jalr x0, x{rs}, 0"],
-    "jalr":  lambda rs: [f"jalr x1, x{rs}, 0"],
     "ret":   lambda: ["jalr x0, x1, 0"],
 }
 
@@ -238,6 +280,43 @@ def assemble_b_type(mnemonic, args, symbol_table):
     machine_hex = f"0x{int(machine_bin, 2):08X}"
     return machine_bin, machine_hex
 
+def assemble_j_type(mnemonic, args, symbol_table):
+ info = J_TYPE_INFO[mnemonic]
+ rd, imm = args
+ rd_bin = to_binary(int(rd), 5)
+ imm_val = parse_immediate(imm, symbol_table)
+ imm_bin = to_binary(imm_val, 21) # 20 bits + signo
+ imm_20 = imm_bin[0]
+ imm_10_1 = imm_bin[10:20]
+ imm_11 = imm_bin[9]
+ imm_19_12 = imm_bin[1:9]
+ machine_bin = f"{imm_20}{imm_19_12}{imm_11}{imm_10_1}{rd_bin}{info['opcode']}"
+ machine_hex = f"0x{int(machine_bin, 2):08X}"
+ return machine_bin, machine_hex
+
+
+def assemble_u_type(mnemonic, args, symbol_table):
+ info = U_TYPE_INFO[mnemonic]
+ rd, imm = args
+ rd_bin = to_binary(int(rd), 5)
+ imm_val = parse_immediate(imm, symbol_table)
+ imm_bin = to_binary(imm_val, 20)
+ machine_bin = f"{imm_bin}{rd_bin}{info['opcode']}"
+ machine_hex = f"0x{int(machine_bin, 2):08X}"
+ return machine_bin, machine_hex
+
+
+def assemble_sys_type(mnemonic):
+ info = I_TYPE_INFO[mnemonic]
+ imm_bin = to_binary(info["imm"], 12)
+ rs1_bin = "00000"
+ rd_bin = "00000"
+ funct3 = info["funct3"]
+ opcode = info["opcode"]
+ machine_bin = f"{imm_bin}{rs1_bin}{funct3}{rd_bin}{opcode}"
+ machine_hex = f"0x{int(machine_bin, 2):08X}"
+ return machine_bin, machine_hex
+
 # -------------------------
 # Primera pasada
 # -------------------------
@@ -346,6 +425,28 @@ def first_pass(lines):
             location_counter += 4
             continue
 
+        # J-Type (ej: jal rd, label)
+        m = J_TYPE_RE.match(code)
+        if m:
+            mnemonic, rd, label = m.groups()
+            instructions.append((num_linea, code, mnemonic, (rd, label), "J"))
+            location_counter += 4
+            continue
+
+        # U-Type (ej: lui rd, imm  |  auipc rd, imm)
+        m = U_TYPE_RE.match(code)
+        if m:
+            mnemonic, rd, imm = m.groups()
+            instructions.append((num_linea, code, mnemonic, (rd, imm), "U"))
+            location_counter += 4
+            continue
+
+        # System (ecall, ebreak)
+        if mnemonic in ["ecall", "ebreak"]:
+            instructions.append((num_linea, code, mnemonic, (), "SYS"))
+            location_counter += 4
+            continue
+
         # -------------------------
         # Si llegamos aquí → Error
         # -------------------------
@@ -355,7 +456,10 @@ def first_pass(lines):
                               list(S_TYPE_INFO.keys()) +
                               list(R_TYPE_INFO.keys()) +
                               list(B_TYPE_INFO.keys()) +
-                              list(PSEUDO_INSTR.keys())):
+                              list(J_TYPE_INFO.keys()) +
+                              list(U_TYPE_INFO.keys()) +
+                              list(PSEUDO_INSTR.keys()) +
+                              ["ecall", "ebreak"]):
             print(f"[Línea {num_linea}] ❌ Instrucción inválida: '{mnemonic}' (no pertenece a RV32I ni es pseudoinstrucción soportada).")
         elif len(tokens) == 1:
             print(f"[Línea {num_linea}] ❌ Error de operandos: la instrucción '{mnemonic}' requiere más argumentos.")
@@ -363,8 +467,6 @@ def first_pass(lines):
             print(f"[Línea {num_linea}] ❌ Error de sintaxis en '{code}'. Revisa comas, registros o inmediatos.")
 
     return symbol_table, instructions
-
-
 # -------------------------
 # Segunda pasada
 # -------------------------
@@ -376,18 +478,37 @@ def second_pass(instructions, symbol_table, bin_file, hex_file):
         try:
             if tipo == "I":
                 binario, hexa = assemble_i_type(mnemonic, args, symbol_table)
+
             elif tipo == "S":
                 binario, hexa = assemble_s_type(mnemonic, args, symbol_table)
+
             elif tipo == "R":
                 binario, hexa = assemble_r_type(mnemonic, args, symbol_table)
+
             elif tipo == "B":
                 # Verificar si el label existe
                 if args[2] not in symbol_table:
                     raise ValueError(f"Etiqueta no definida: '{args[2]}'")
                 binario, hexa = assemble_b_type(mnemonic, args, symbol_table)
+
+            elif tipo == "J":
+                # jal rd, label
+                if args[1] not in symbol_table:
+                    raise ValueError(f"Etiqueta no definida: '{args[1]}'")
+                binario, hexa = assemble_j_type(mnemonic, args, symbol_table)
+
+            elif tipo == "U":
+                # lui rd, imm   |   auipc rd, imm
+                binario, hexa = assemble_u_type(mnemonic, args, symbol_table)
+
+            elif tipo == "SYS":
+                # ecall / ebreak
+                binario, hexa = assemble_sys_type(mnemonic, args, symbol_table)
+
             elif tipo == "PSEUDO":
                 # Aquí deberías expandir la pseudoinstrucción antes de ensamblar
                 raise ValueError(f"Pseudoinstrucción '{mnemonic}' aún no implementada en second_pass")
+
             else:
                 raise ValueError("Tipo de instrucción desconocido")
 
@@ -396,6 +517,7 @@ def second_pass(instructions, symbol_table, bin_file, hex_file):
             print(f"   Hex: {hexa}")
             bin_lines.append(binario)
             hex_lines.append(hexa)
+
         except Exception as e:
             print(f"[Línea {num_linea}] ⚠️ Error: {e}")
 
@@ -425,13 +547,6 @@ def main():
 
     except FileNotFoundError:
         print(f"⚠️ No se encontró el archivo {asm_file}.")
-
-# -------------------------
-# Primera pasada
-# -------------------------
-# -------------------------
-# Primera pasada (con errores más específicos)
-# -------------------------
 
 
 if __name__ == "__main__":

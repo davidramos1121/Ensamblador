@@ -1,13 +1,9 @@
-    .data
-msg: .word 1234
-
     .text
 main:
-    addi x5, x0, 10
-    sw x5, 0(x1)
-
-    adii x1, x2, 5
-    addi x1, x2, x3
-    addi x1, x2, 123456
-    beq x1, x2, notfound
-    addi x1
+    addi x1, x0, 4
+    lui x2, 0x12345
+    auipc x3, 0x10
+    jal x4, target
+    addi x5, x0, 7
+target:
+    jalr x6, x2, 8
