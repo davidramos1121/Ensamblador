@@ -1,9 +1,6 @@
 import re
 import sys
 
-# -------------------------
-# Expresiones regulares
-# -------------------------
 
 I_TYPE_RE = re.compile(
     # LOADS → formato: lb rd, imm(rs1)
@@ -287,30 +284,37 @@ def assemble_u_type(mnemonic, args, symbol_table):
 
 
 def assemble_sys_type(mnemonic):
- info = I_TYPE_INFO[mnemonic]
- imm_bin = to_binary(info["imm"], 12)
- rs1_bin = "00000"
- rd_bin = "00000"
- funct3 = info["funct3"]
- opcode = info["opcode"]
- machine_bin = f"{imm_bin}{rs1_bin}{funct3}{rd_bin}{opcode}"
- machine_hex = f"0x{int(machine_bin, 2):08X}"
- return machine_bin, machine_hex
+    info = SYS_TYPE_INFO[mnemonic]   # ✅ usar la tabla correcta
+    imm_bin = to_binary(int(info["imm"], 2), 12)  # imm es string binaria → conviértela
+    rs1_bin = "00000"
+    rd_bin = "00000"
+    funct3 = info["funct3"]
+    opcode = info["opcode"]
+    machine_bin = f"{imm_bin}{rs1_bin}{funct3}{rd_bin}{opcode}"
+    machine_hex = f"0x{int(machine_bin, 2):08X}"
+    return machine_bin, machine_hex
+
 
 def expand_pseudo(mnemonic, args):
     if mnemonic not in PSEUDO_INFO:
         raise ValueError(f"Pseudoinstrucción desconocida: {mnemonic}")
     expansion = PSEUDO_INFO[mnemonic]["expansion"]
 
-    # Reemplazo de placeholders
     mapping = {}
-    if "{rd}" in expansion: mapping["rd"] = args[0]
-    if "{rs}" in expansion: mapping["rs"] = args[1] if len(args) > 1 else args[0]
-    if "{rt}" in expansion: mapping["rt"] = args[1]
-    if "{offset}" in expansion: mapping["offset"] = args[-1]
+    if mnemonic in ("beqz", "bnez", "blez", "bgez", "bltz", "bgtz"):
+        mapping["rs"] = args[0]      # primer operando = registro
+        mapping["offset"] = args[1]  # segundo operando = etiqueta
+    elif mnemonic in ("bgt", "ble", "bgtu", "bleu"):
+        mapping["rs"] = args[0]
+        mapping["rt"] = args[1]
+        mapping["offset"] = args[2]
+    else:
+        if "{rd}" in expansion: mapping["rd"] = args[0]
+        if "{rs}" in expansion: mapping["rs"] = args[1] if len(args) > 1 else args[0]
+        if "{rt}" in expansion: mapping["rt"] = args[1]
+        if "{offset}" in expansion: mapping["offset"] = args[-1]
 
     return expansion.format(**mapping)
-
 
 
 def first_pass(lines):
